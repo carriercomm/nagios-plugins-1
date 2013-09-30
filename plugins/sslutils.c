@@ -161,6 +161,7 @@ int np_net_ssl_check_cert_real(SSL *ssl, int days_till_exp_warn, int days_till_e
 	float time_left;
 	int days_left;
 	char timestamp[17] = "";
+	char subject[256];
 
 	certificate=SSL_get_peer_certificate(ssl);
 	if (!certificate) {
@@ -182,10 +183,14 @@ int np_net_ssl_check_cert_real(SSL *ssl, int days_till_exp_warn, int days_till_e
 	/* Retrieve timestamp of certificate */
 	tm = X509_get_notAfter(certificate);
 
+	/* Retrieve subject name in certificate. */
+	*subject = '\0';
+	X509_NAME_get_text_by_NID(X509_get_subject_name(certificate), NID_commonName, subject, 256);
+
 	/* Generate tm structure to process timestamp */
 	if (tm->type == V_ASN1_UTCTIME) {
 		if (tm->length < 10) {
-			printf("%s\n", _("CRITICAL - Wrong time format in certificate."));
+			printf("%s\n", _("CRITICAL - Wrong time format in certificate '%s'."), subject);
 			return STATE_CRITICAL;
 		} else {
 			stamp.tm_year = (tm->data[0] - '0') * 10 + (tm->data[1] - '0');
@@ -195,7 +200,7 @@ int np_net_ssl_check_cert_real(SSL *ssl, int days_till_exp_warn, int days_till_e
 		}
 	} else {
 		if (tm->length < 12) {
-			printf("%s\n", _("CRITICAL - Wrong time format in certificate."));
+			printf("%s\n", _("CRITICAL - Wrong time format in certificate '%s'."), subject);
 			return STATE_CRITICAL;
 		} else {
 			stamp.tm_year =
@@ -218,28 +223,35 @@ int np_net_ssl_check_cert_real(SSL *ssl, int days_till_exp_warn, int days_till_e
 
 	time_left = difftime(timegm(&stamp), time(NULL));
 	days_left = time_left / 86400;
+#ifdef AMERICAN_DATE_FORMAT
 	snprintf
 		(timestamp, 17, "%02d/%02d/%04d %02d:%02d",
 		 stamp.tm_mon + 1,
 		 stamp.tm_mday, stamp.tm_year + 1900, stamp.tm_hour, stamp.tm_min);
+#else
+	snprintf
+		(timestamp, 17, "%04d-%02d-%02d %02d:%02d",
+		 stamp.tm_year + 1900,
+		 stamp.tm_mon + 1, stamp.tm_mday, stamp.tm_hour, stamp.tm_min);
+#endif
 
 	if (days_left > 0 && days_left <= days_till_exp_warn) {
-		printf (_("%s - Certificate '%s' expires in %d day(s) (%s).\n"), (days_left>days_till_exp_crit)?"WARNING":"CRITICAL", cn, days_left, timestamp);
+		printf (_("%s - Certificate '%s' expires in %d day(s) (%s).\n"), (days_left>days_till_exp_crit)?"WARNING":"CRITICAL", subject, days_left, timestamp);
 		if (days_left > days_till_exp_crit)
 			return STATE_WARNING;
 		else
 			return STATE_CRITICAL;
 	} else if (time_left < 0) {
-		printf(_("CRITICAL - Certificate '%s' expired on %s.\n"), cn, timestamp);
+		printf(_("CRITICAL - Certificate '%s' expired on %s.\n"), subject, timestamp);
 		status=STATE_CRITICAL;
 	} else if (days_left == 0) {
-		printf (_("%s - Certificate '%s' expires today (%s).\n"), (days_left>days_till_exp_crit)?"WARNING":"CRITICAL", cn, timestamp);
+		printf (_("%s - Certificate '%s' expires today (%s).\n"), (days_left>days_till_exp_crit)?"WARNING":"CRITICAL", subject, timestamp);
 		if (days_left > days_till_exp_crit)
 			return STATE_WARNING;
 		else
 			return STATE_CRITICAL;
 	} else {
-		printf(_("OK - Certificate '%s' will expire on %s.\n"), cn, timestamp);
+		printf(_("OK - Certificate '%s' will expire on %s.\n"), subject, timestamp);
 		status=STATE_OK;
 	}
 	X509_free(certificate);
